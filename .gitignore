@@ -3,3 +3,12 @@
 *~
 .idea
 .vscode
+
+# Compiled binaries
+/proton-organizer
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Session credentials
+.proton-organizer/
