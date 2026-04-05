@@ -55,13 +55,23 @@ The user controls batch size. Ask if they don't specify, or use a reasonable def
 
 For each message, examine the JSON fields and infer the best folder. Use these signals in priority order:
 
-**1. The "to" address alias.** Many users register for services with `+alias` email suffixes (e.g. `user+spotify@domain.com`). Extract text between `+` and `@` — it often maps directly to a folder name. Match it against the discovered folder list.
+#### Signal 1: The "to" address alias
 
-**2. Sender address and domain.** The sender's domain or address often identifies the service. Match against known folders (e.g. if there's a folder called "Github" and the sender is `@github.com`, that's a match). For payment processors like Stripe, the receipt is about the *service being paid for* — read the subject to determine which folder, not a generic "Finance" folder.
+Many users register for services with `+alias` email suffixes (e.g. `user+service@domain.com`). Extract text between `+` and `@` and match it against the discovered folder list. This is the strongest signal when it matches a folder name directly.
 
-**3. Subject line.** Contains contextual clues — refunds, invoices, shipping, marketing promos, newsletters, statements, etc.
+Note: an alias doesn't always name the service — it may name a use case or category. When it doesn't match any folder, fall through to the other signals.
 
-**4. General reasoning.** When no strong signal exists, reason about the email's nature and match to the closest category in the user's folder hierarchy.
+#### Signal 2: Sender address and domain
+
+Match the sender's domain against folder names in the discovered hierarchy. When the sender is an intermediary (payment processor, reward platform, notification relay), use the alias or subject to determine the *actual* service — don't file it under the intermediary.
+
+#### Signal 3: Subject line
+
+Contains contextual clues — refunds, invoices, shipping, marketing promos, newsletters, statements, event invitations, etc. Most useful when the alias and sender are ambiguous.
+
+#### Signal 4: General reasoning
+
+When no strong signal exists, reason about the email's nature and match to the closest category in the user's folder hierarchy. Think about what the email *is* (a product update vs. a newsletter vs. a transaction vs. a notification) and where that kind of thing lives in the hierarchy.
 
 **Prefer the most specific subfolder** when choosing between a parent and child folder.
 
@@ -73,8 +83,8 @@ Show a markdown table for confirmation:
 
 | # | From | Subject | Suggested Folder |
 |---|------|---------|-----------------|
-| 1 | sender@example.com | Your receipt | Services/Spotify |
-| 2 | news@sub.com | Weekly digest | NEW: Others/Substack |
+| 1 | sender@example.com | Your receipt | Services/Acme |
+| 2 | news@example.com | Weekly digest | NEW: Others/Tech News |
 
 **Unread messages** — add an Action column to flag emails that look like they need a reply, payment, or other user action:
 
@@ -83,22 +93,28 @@ Show a markdown table for confirmation:
 | 1 | bank@example.com | Payment due | Finance/Bank | NEEDS ACTION |
 | 2 | news@example.com | New post | Others/Newsletter | — |
 
-For messages that don't fit any existing folder, prefix with `NEW:` and suggest a name and parent based on the existing hierarchy's conventions.
+For messages that don't fit any existing folder, prefix with `NEW:` and suggest a name and parent based on the existing hierarchy's conventions. Be proactive — if you see 2+ emails from an unrecognized service, suggest creating a dedicated subfolder.
 
-**Always wait for explicit user confirmation before executing any moves.**
+**Always wait for explicit user confirmation before executing any moves.** Once the user grants autonomous approval ("don't ask me, just do it"), you can skip confirmation for the rest of the session.
 
 ### Step 5: Execute confirmed moves
 
 After the user confirms (they may accept all, correct specific entries, or skip some):
 
-- Execute moves in parallel when possible (multiple Bash calls in one turn)
-- For `NEW:` folders, create the folder first with `create-folder`, get the ID, then move
-- Cap at ~10 parallel moves to respect API rate limits
+- **Chain moves with `&&`** in a single Bash call for speed — this is much faster than individual calls:
+  ```bash
+  go run ./cmd/proton-organizer/ move-message --message-id "ID1" --folder-id "FID" 2>/dev/null && \
+  go run ./cmd/proton-organizer/ move-message --message-id "ID2" --folder-id "FID" 2>/dev/null && \
+  ...
+  ```
+- For `NEW:` folders, create the folder first with `create-folder`, get the ID from the response, then move
+- Keep chains to ~20 moves per Bash call to stay within timeout limits
 
 ### Step 6: Summary and continue
 
 ```
 Batch complete: X moved, Y skipped, Z new folders created
+Remaining in inbox: N messages
 ```
 
 Offer to continue with the next batch. If read messages are exhausted, offer to switch to unread.
@@ -107,4 +123,5 @@ Offer to continue with the next batch. If read messages are exhausted, offer to 
 
 - Auth is handled by cached session at `~/.proton-organizer/session.json`. If expired, the CLI prompts interactively — let the user know.
 - System label IDs are small numbers ("0" = Inbox, "5" = All Mail, etc.). Custom folder IDs are long base64 strings. Don't confuse them.
-- If `list-inbox` returns empty, the inbox is clean — tell the user.
+- If `list-inbox` returns `null` or empty, the inbox is clean — tell the user.
+- When the user says to go autonomous, respect that — fetch, classify, move, and loop without asking until the inbox is empty.
